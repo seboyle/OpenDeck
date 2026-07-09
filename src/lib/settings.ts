@@ -20,7 +20,7 @@ import { locale } from "./i18n.ts";
 
 export const settings: Writable<Settings | null> = writable(null);
 (async () => settings.set(await invoke("get_settings")))();
-export const localisations: Writable<{ [plugin: string]: any } | null> = writable(null);
+export const localisations: Writable<Record<string, Record<string, Record<string, string>>> | null> = writable(null);
 settings.subscribe(async (value) => {
 	if (value) {
 		await invoke("set_settings", { settings: value });
