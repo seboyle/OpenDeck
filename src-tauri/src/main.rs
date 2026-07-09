@@ -254,14 +254,14 @@ If you have already donated, thank you so much for your support!"#,
 					.await?
 					.json::<serde_json::Value>()
 					.await?;
-				let tag_name = res.get("tag_name").unwrap().as_str().unwrap();
+				let tag_name = res.get("tag_name").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("missing tag_name in release response"))?;
 				if semver::Version::parse(built_info::PKG_VERSION)?.cmp(&semver::Version::parse(&tag_name[1..])?) == Ordering::Less {
-					let app = APP_HANDLE.get().unwrap();
+					let Some(app) = APP_HANDLE.get() else { return Ok(()) };
 					app.dialog()
 						.message(format!(
 							"A new version of {PRODUCT_NAME}, {}, is available.\nUpdate description:\n\n{}",
 							tag_name,
-							res.get("body").map(|v| v.as_str().unwrap()).unwrap_or("No description").trim()
+							res.get("body").and_then(|v| v.as_str()).unwrap_or("No description").trim()
 						))
 						.title(format!("{PRODUCT_NAME} update available"))
 						.show(|_| ());

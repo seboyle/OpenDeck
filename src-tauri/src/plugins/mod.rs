@@ -446,7 +446,7 @@ pub fn initialise_plugins() {
 		Ok(p) => p,
 		Err(error) => {
 			error!("Failed to read plugins directory at {}: {}", plugin_dir.display(), error);
-			panic!()
+			return;
 		}
 	};
 

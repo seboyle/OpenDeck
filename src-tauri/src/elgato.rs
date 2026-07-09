@@ -89,7 +89,7 @@ pub async fn update_image(context: &crate::shared::Context, image: Option<&str>)
 		let is_touch_point = context.controller == "Keypad" && context.position >= key_count;
 
 		if let Some(image) = image {
-			let data = image.split_once(',').unwrap().1;
+			let data = image.split_once(',').ok_or_else(|| anyhow::anyhow!("invalid base64 image: missing comma separator"))?.1;
 			let bytes = base64::engine::general_purpose::STANDARD.decode(data)?;
 			if context.controller == "Encoder" {
 				let locks = acquire_locks().await;
@@ -189,7 +189,13 @@ async fn init(device: AsyncStreamDeck, device_id: String) {
 		return;
 	}
 
-	let device_name = device.product().await.unwrap();
+	let device_name = match device.product().await {
+		Ok(name) => name,
+		Err(e) => {
+			log::error!("Failed to get device product name: {e}");
+			return;
+		}
+	};
 	let kind = device.kind();
 	let device_type = match kind {
 		Kind::Original | Kind::OriginalV2 | Kind::Mk2 | Kind::Mk2Scissor | Kind::Mk2Module => 0,
