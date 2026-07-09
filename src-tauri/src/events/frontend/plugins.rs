@@ -67,7 +67,11 @@ pub async fn list_plugins(app: AppHandle) -> Result<Vec<PluginInfo>, Error> {
 pub async fn install_plugin(app: AppHandle, url: Option<String>, file: Option<String>, fallback_id: Option<String>) -> Result<(), Error> {
 	let bytes = match file {
 		None => {
-			let resp = match reqwest::get(url.unwrap()).await {
+			let url = url.unwrap();
+			if !url.starts_with("https://") {
+				return Err(anyhow::anyhow!("Plugin downloads must use HTTPS").into());
+			}
+			let resp = match reqwest::get(&url).await {
 				Ok(resp) => resp,
 				Err(error) => return Err(anyhow::Error::from(error).into()),
 			};
