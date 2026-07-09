@@ -202,7 +202,8 @@ pub struct DeviceStores {
 
 impl DeviceStores {
 	pub fn get_selected_profile(&mut self, device: &str) -> Result<String, anyhow::Error> {
-		if !self.stores.contains_key(device) {
+		use std::collections::hash_map::Entry;
+		if let Entry::Vacant(entry) = self.stores.entry(device.to_owned()) {
 			let default = DeviceConfig {
 				selected_profile: "Default".to_owned(),
 			};
@@ -210,26 +211,28 @@ impl DeviceStores {
 			let store = Store::new(device, &config_dir().join("profiles"), default).context(format!("Failed to create store for device config {}", device))?;
 			store.save()?;
 
-			self.stores.insert(device.to_owned(), store);
+			entry.insert(store);
 		}
 
-		let from_store = &self.stores.get(device).unwrap().value.selected_profile;
+		let from_store = &self.stores.get(device).expect("just inserted").value.selected_profile;
 		let all = get_device_profiles(device)?;
-		if all.contains(from_store) { Ok(from_store.clone()) } else { Ok(all.first().unwrap().clone()) }
+		if all.contains(from_store) { Ok(from_store.clone()) } else { Ok(all.first().cloned().unwrap_or_else(|| "Default".to_owned())) }
 	}
 
 	pub fn set_selected_profile(&mut self, device: &str, id: String) -> Result<(), anyhow::Error> {
-		if self.stores.contains_key(device) {
-			let store = self.stores.get_mut(device).unwrap();
-			store.value.selected_profile = id;
-			store.save()?;
-		} else {
-			let default = DeviceConfig { selected_profile: id };
-
-			let store = Store::new(device, &config_dir().join("profiles"), default).context(format!("Failed to create store for device config {}", device))?;
-			store.save()?;
-
-			self.stores.insert(device.to_owned(), store);
+		use std::collections::hash_map::Entry;
+		match self.stores.entry(device.to_owned()) {
+			Entry::Occupied(mut entry) => {
+				let store = entry.get_mut();
+				store.value.selected_profile = id;
+				store.save()?;
+			}
+			Entry::Vacant(entry) => {
+				let default = DeviceConfig { selected_profile: id };
+				let store = Store::new(device, &config_dir().join("profiles"), default).context(format!("Failed to create store for device config {}", device))?;
+				store.save()?;
+				entry.insert(store);
+			}
 		}
 		Ok(())
 	}
@@ -294,6 +297,10 @@ pub struct Locks<'a> {
 	pub profile_stores: RwLockReadGuard<'a, ProfileStores>,
 }
 
+/// Acquire read locks on both stores.
+///
+/// LOCK ORDERING: Always acquire DEVICE_STORES before PROFILE_STORES to prevent deadlocks.
+/// Any code acquiring these locks independently MUST follow this same order.
 pub async fn acquire_locks() -> Locks<'static> {
 	let device_stores = DEVICE_STORES.read().await;
 	let profile_stores = PROFILE_STORES.read().await;
@@ -305,6 +312,10 @@ pub struct LocksMut<'a> {
 	pub profile_stores: RwLockWriteGuard<'a, ProfileStores>,
 }
 
+/// Acquire write locks on both stores.
+///
+/// LOCK ORDERING: Always acquire DEVICE_STORES before PROFILE_STORES to prevent deadlocks.
+/// Any code acquiring these locks independently MUST follow this same order.
 pub async fn acquire_locks_mut() -> LocksMut<'static> {
 	let device_stores = DEVICE_STORES.write().await;
 	let profile_stores = PROFILE_STORES.write().await;
