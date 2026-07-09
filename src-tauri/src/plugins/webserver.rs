@@ -16,9 +16,21 @@ fn mime(extension: &str) -> String {
 
 /// Start a simple webserver to serve files of plugins that run in a browser environment.
 pub async fn init_webserver(prefix: PathBuf) {
-	let prefix = prefix.canonicalize().unwrap();
+	let prefix = match prefix.canonicalize() {
+		Ok(p) => p,
+		Err(e) => {
+			log::error!("Failed to canonicalize webserver prefix path: {e}");
+			return;
+		}
+	};
 	let server = {
-		let listener = std::net::TcpListener::bind(format!("0.0.0.0:{}", *super::PORT_BASE + 2)).unwrap();
+		let listener = match std::net::TcpListener::bind(format!("127.0.0.1:{}", *super::PORT_BASE + 2)) {
+			Ok(l) => l,
+			Err(e) => {
+				log::error!("Failed to bind webserver listener: {e}");
+				return;
+			}
+		};
 
 		#[cfg(windows)]
 		{
@@ -28,13 +40,25 @@ pub async fn init_webserver(prefix: PathBuf) {
 			unsafe { SetHandleInformation(listener.as_raw_socket() as _, HANDLE_FLAG_INHERIT, 0) };
 		}
 
-		Server::from_listener(listener, None).unwrap()
+		match Server::from_listener(listener, None) {
+			Ok(s) => s,
+			Err(e) => {
+				log::error!("Failed to create webserver from listener: {e}");
+				return;
+			}
+		}
 	};
 
 	for request in server.incoming_requests() {
-		let mut url = urlencoding::decode(request.url()).unwrap().into_owned();
-		if url.contains('?') {
-			url = url.split_once('?').unwrap().0.to_owned();
+		let mut url = match urlencoding::decode(request.url()) {
+			Ok(decoded) => decoded.into_owned(),
+			Err(_) => {
+				let _ = request.respond(Response::empty(400));
+				continue;
+			}
+		};
+		if let Some((before, _)) = url.split_once('?') {
+			url = before.to_owned();
 		}
 		#[cfg(target_os = "windows")]
 		let url = url[1..].replace('/', "\\");
@@ -46,8 +70,8 @@ pub async fn init_webserver(prefix: PathBuf) {
 		}
 
 		// Ensure the requested path is within the config directory to prevent unrestricted access to the filesystem.
-		let developer = crate::store::get_settings().value.developer;
-		if !developer && !path.canonicalize().is_ok_and(|p| p.starts_with(&prefix)) {
+		// Always validate paths regardless of developer mode to prevent path traversal attacks.
+		if !path.canonicalize().is_ok_and(|p| p.starts_with(&prefix)) {
 			let _ = request.respond(Response::empty(403));
 			continue;
 		}
