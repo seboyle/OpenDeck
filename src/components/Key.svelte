@@ -17,7 +17,7 @@
 
 	import { invoke } from "@tauri-apps/api/core";
 	import { listen } from "@tauri-apps/api/event";
-	import { tick } from "svelte";
+	import { onDestroy, tick } from "svelte";
 
 	export let context: Context | null;
 	export let label: string = "";
@@ -47,13 +47,19 @@
 		}
 	}
 
-	listen("update_state", ({ payload }: { payload: { context: string; contents: ActionInstance | null } }) => {
-		if (payload.context == slot?.context) slot = payload.contents;
-	});
+	const unlisteners: Promise<() => void>[] = [];
 
-	listen("key_moved", ({ payload }: { payload: { context: Context; pressed: boolean } }) => {
-		if (JSON.stringify(context) == JSON.stringify(payload.context)) pressed = payload.pressed;
-	});
+	unlisteners.push(
+		listen("update_state", ({ payload }: { payload: { context: string; contents: ActionInstance | null } }) => {
+			if (payload.context == slot?.context) slot = payload.contents;
+		})
+	);
+
+	unlisteners.push(
+		listen("key_moved", ({ payload }: { payload: { context: Context; pressed: boolean } }) => {
+			if (JSON.stringify(context) == JSON.stringify(payload.context)) pressed = payload.pressed;
+		})
+	);
 
 	function select(event: MouseEvent | KeyboardEvent) {
 		if (event instanceof MouseEvent && event.ctrlKey) return;
@@ -129,19 +135,28 @@
 	let showAlert: boolean = false;
 	let showOk: boolean = false;
 	let timeouts: number[] = [];
-	listen("show_alert", ({ payload }: { payload: string }) => {
-		if (!slot || payload != slot.context) return;
+	unlisteners.push(
+		listen("show_alert", ({ payload }: { payload: string }) => {
+			if (!slot || payload != slot.context) return;
+			timeouts.forEach(clearTimeout);
+			showOk = false;
+			showAlert = true;
+			timeouts.push(setTimeout(() => (showAlert = false), 1.5e3));
+		})
+	);
+	unlisteners.push(
+		listen("show_ok", ({ payload }: { payload: string }) => {
+			if (!slot || payload != slot.context) return;
+			timeouts.forEach(clearTimeout);
+			showAlert = false;
+			showOk = true;
+			timeouts.push(setTimeout(() => (showOk = false), 1.5e3));
+		})
+	);
+
+	onDestroy(() => {
+		unlisteners.forEach((p) => p.then((unlisten) => unlisten()));
 		timeouts.forEach(clearTimeout);
-		showOk = false;
-		showAlert = true;
-		timeouts.push(setTimeout(() => (showAlert = false), 1.5e3));
-	});
-	listen("show_ok", ({ payload }: { payload: string }) => {
-		if (!slot || payload != slot.context) return;
-		timeouts.forEach(clearTimeout);
-		showAlert = false;
-		showOk = true;
-		timeouts.push(setTimeout(() => (showOk = false), 1.5e3));
 	});
 
 	let canvas: HTMLCanvasElement;

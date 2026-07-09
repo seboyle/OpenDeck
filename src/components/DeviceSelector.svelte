@@ -8,6 +8,7 @@
 	import { invoke } from "@tauri-apps/api/core";
 	import { listen } from "@tauri-apps/api/event";
 	import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+	import { onDestroy } from "svelte";
 
 	export let devices: { [id: string]: DeviceInfo } = {};
 	export let value: string;
@@ -32,17 +33,27 @@
 		registered = [];
 	}
 
-	listen("switch_profile", async ({ payload }: { payload: { device: string; profile: string } }) => {
-		if (payload.device == value) {
-			$profileManager?.setProfile(payload.profile);
-		} else {
-			await invoke("set_selected_profile", { device: payload.device, id: payload.profile });
-			selectedProfiles[payload.device] = await invoke("get_selected_profile", { device: payload.device });
-		}
-	});
+	const unlisteners: Promise<() => void>[] = [];
+
+	unlisteners.push(
+		listen("switch_profile", async ({ payload }: { payload: { device: string; profile: string } }) => {
+			if (payload.device == value) {
+				$profileManager?.setProfile(payload.profile);
+			} else {
+				await invoke("set_selected_profile", { device: payload.device, id: payload.profile });
+				selectedProfiles[payload.device] = await invoke("get_selected_profile", { device: payload.device });
+			}
+		})
+	);
 
 	(async () => (devices = await invoke("get_devices")))();
-	listen("devices", ({ payload }: { payload: { [id: string]: DeviceInfo } }) => (devices = payload));
+	unlisteners.push(
+		listen("devices", ({ payload }: { payload: { [id: string]: DeviceInfo } }) => (devices = payload))
+	);
+
+	onDestroy(() => {
+		unlisteners.forEach((p) => p.then((unlisten) => unlisten()));
+	});
 
 	let buildInfo: string;
 	(async () => (buildInfo = await invoke("get_build_info")))();
