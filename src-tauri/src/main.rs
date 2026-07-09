@@ -53,17 +53,28 @@ fn hide_window(app: &AppHandle) -> Result<(), tauri::Error> {
 	Ok(())
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
 	log_panics::init();
 	let _ = fix_path_env::fix();
 
 	#[cfg(target_os = "linux")]
-	// SAFETY: std::env::set_var can cause race conditions in multithreaded contexts. We have not spawned any other threads at this point.
-	unsafe {
-		std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-		std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+	{
+		// SAFETY: set_var is called before starting the tokio runtime, so only
+		// one thread exists at this point. No data race is possible.
+		unsafe {
+			std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+			std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+		}
 	}
+
+	tokio::runtime::Builder::new_multi_thread()
+		.enable_all()
+		.build()
+		.expect("Failed to build tokio runtime")
+		.block_on(async_main());
+}
+
+async fn async_main() {
 
 	let app = match Builder::default()
 		.invoke_handler(tauri::generate_handler![
