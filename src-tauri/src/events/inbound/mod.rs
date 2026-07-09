@@ -9,10 +9,46 @@ use crate::{
 	store::profiles::{acquire_locks, get_instance},
 };
 
+use std::collections::HashMap;
+use std::sync::LazyLock;
+use std::time::Instant;
+
+use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::{Error, Message};
 
 use log::warn;
 use serde::Deserialize;
+
+/// Simple per-plugin rate limiter using a token bucket algorithm.
+/// Allows up to MAX_TOKENS messages, refilling at REFILL_RATE tokens/second.
+struct RateLimiter {
+	buckets: HashMap<String, (f64, Instant)>,
+}
+
+const MAX_TOKENS: f64 = 200.0;
+const REFILL_RATE: f64 = 100.0; // tokens per second
+
+impl RateLimiter {
+	fn new() -> Self {
+		Self { buckets: HashMap::new() }
+	}
+
+	fn allow(&mut self, key: &str) -> bool {
+		let now = Instant::now();
+		let (tokens, last) = self.buckets.entry(key.to_owned()).or_insert((MAX_TOKENS, now));
+		let elapsed = now.duration_since(*last).as_secs_f64();
+		*tokens = (*tokens + elapsed * REFILL_RATE).min(MAX_TOKENS);
+		*last = now;
+		if *tokens >= 1.0 {
+			*tokens -= 1.0;
+			true
+		} else {
+			false
+		}
+	}
+}
+
+static RATE_LIMITER: LazyLock<Mutex<RateLimiter>> = LazyLock::new(|| Mutex::new(RateLimiter::new()));
 
 #[derive(Deserialize)]
 #[serde(tag = "event")]
@@ -72,6 +108,12 @@ pub enum InboundEventType {
 
 pub async fn process_incoming_message(data: Result<Message, Error>, uuid: &str, skip_auth: bool) {
 	if let Ok(Message::Text(text)) = data {
+		// Rate limit messages per plugin to prevent DoS
+		if !uuid.is_empty() && !RATE_LIMITER.lock().await.allow(uuid) {
+			warn!("Rate limit exceeded for plugin {uuid}, dropping message");
+			return;
+		}
+
 		let decoded: InboundEventType = match serde_json::from_str(&text) {
 			Ok(event) => event,
 			Err(_) => return,
